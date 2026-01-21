@@ -1,10 +1,14 @@
 cmake_minimum_required(VERSION 3.15)
 
-project(MyProject C CXX)
+project(NoitaModSettings C CXX)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+
+if(MSVC)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
 
 add_library(fastlz_lib STATIC ext/FastLZ/fastlz.c)
 target_include_directories(fastlz_lib PUBLIC 
@@ -24,14 +28,16 @@ target_include_directories(core_lib PUBLIC src)
 if(NOT EMSCRIPTEN)
     add_executable(extractor src/main.cpp)
     target_link_libraries(extractor PRIVATE core_lib)
-    target_compile_options(extractor PRIVATE
-        "-O3"
-    )
-    target_link_options(extractor PRIVATE
-        "-static"
-        "-s"
-    )
     set_target_properties(extractor PROPERTIES INTERPROCEDURAL_OPTIMIZATION TRUE)
+    if(MSVC)
+        target_compile_options(extractor PRIVATE "/O2")
+    else()
+        target_compile_options(extractor PRIVATE "-O3")
+        target_link_options(extractor PRIVATE
+            "-static"
+            "-s"
+        )
+    endif()
 endif()
 
 if(EMSCRIPTEN)

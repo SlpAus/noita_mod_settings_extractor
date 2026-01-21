@@ -1,0 +1,162 @@
+name: Build Project
+
+on:
+  push:
+    branches: [ "main" ]
+    tags: [ "v*" ]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-cli:
+    name: Build CLI (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            artifact_name: extractor-linux
+            binary_src: ./build/extractor
+            binary_dst: extractor
+            asset_name: extractor-linux.tar.gz
+            cc: gcc-14
+            cxx: g++-14
+            
+          - os: windows-latest
+            artifact_name: extractor-windows
+            binary_src: ./build/Release/extractor.exe
+            binary_dst: extractor.exe
+            asset_name: extractor-windows.zip
+            cc: cl
+            cxx: cl
+
+    env:
+      CC: ${{ matrix.cc }}
+      CXX: ${{ matrix.cxx }}
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Install GCC 14 (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-14 g++-14
+
+      - name: Configure CMake
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --config Release
+
+      - name: Pack Artifacts
+        shell: bash
+        run: |
+          mkdir -p release_package
+
+          cp "${{ matrix.binary_src }}" "./${{ matrix.binary_dst }}"
+          
+          if [ "${{ runner.os }}" == "Windows" ]; then
+            7z a release_package/${{ matrix.asset_name }} ${{ matrix.binary_dst }}
+          else
+            chmod +x ${{ matrix.binary_dst }}
+            tar -czvf release_package/${{ matrix.asset_name }} ${{ matrix.binary_dst }}
+          fi
+
+      - name: Upload CLI Artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: release_package/*
+
+  build-wasm:
+    name: Build WASM Package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Determine Version
+        id: version
+        run: |
+          BASE_VERSION=$(cat version.txt)
+
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            TAG_NAME=${GITHUB_REF#refs/tags/v}
+            if [ "$TAG_NAME" != "$BASE_VERSION" ]; then
+              echo "Error: Tag name ($TAG_NAME) mismatch version.txt ($BASE_VERSION)."
+              exit 1
+            fi
+
+            FINAL_VERSION="$BASE_VERSION"
+          else
+            FINAL_VERSION="${BASE_VERSION}-build.${{ github.run_number }}"
+          fi
+
+          echo "PKG_VERSION=$FINAL_VERSION" >> $GITHUB_ENV
+
+      - name: Setup Emscripten
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 4.0.23
+
+      - name: Configure CMake
+        run: emcmake cmake -B build-wasm -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: emmake cmake --build build-wasm --config Release
+
+      - name: Create NPM Package
+        run: |
+          mkdir -p dist
+          cp build-wasm/extractor_wasm.js dist/index.js
+          cp build-wasm/extractor_wasm.wasm dist/extractor_wasm.wasm
+          
+          cd dist
+          npm init -y
+          
+          npm pkg set name="noita-mod-settings"
+
+          npm pkg set version="${{ env.PKG_VERSION }}"
+          
+          npm pkg set main="index.js"
+          npm pkg set type="commonjs"
+          npm pkg set files[]=index.js
+          npm pkg set files[]=extractor_wasm.wasm
+
+          npm pack
+
+      - name: Upload WASM Artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: wasm-package
+          path: dist/*.tgz
+
+  release:
+    name: Create GitHub Release
+    needs: [build-cli, build-wasm]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true
