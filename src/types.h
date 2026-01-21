@@ -9,6 +9,19 @@
 struct SettingBool
 {
     int32_t value;
+
+    std::variant<bool, int32_t> resolve() const
+    {
+        if (value == 0)
+        {
+            return false;
+        }
+        if (value == 1)
+        {
+            return true;
+        }
+        return value;
+    }
 };
 
 using SettingValue = std::variant<std::nullptr_t, SettingBool, double, std::string>;

@@ -2,6 +2,7 @@
 
 #include <cstring>
 #include <expected>
+#include <span>
 
 #define CHECK_RES(x) \
     if (!(x))        \

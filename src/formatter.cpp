@@ -1,6 +1,7 @@
 #include "formatter.h"
 
 #include <format>
+#include <iostream>
 #include <string>
 
 namespace
@@ -141,18 +142,17 @@ namespace
 
         void write_single_value(SettingBool val)
         {
-            if (val.value == 0)
-            {
-                out << "false";
-            }
-            else if (val.value == 1)
-            {
-                out << "true";
-            }
-            else
-            {
-                out << val.value;
-            }
+            std::visit([this](auto &&arg)
+                       {
+                        using T = std::decay_t<decltype(arg)>;
+                        if constexpr (std::is_same_v<T, bool>)
+                        {
+                            out << (arg ? "true" : "false");
+                        }
+                        else
+                        {
+                            out << arg;
+                        } }, val.resolve());
         }
 
         void write_single_value(double val)
